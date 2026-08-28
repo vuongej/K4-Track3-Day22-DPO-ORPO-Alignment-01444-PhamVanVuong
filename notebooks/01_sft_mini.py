@@ -29,14 +29,15 @@ from pathlib import Path
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
 assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
-# Tier-specific hyperparameters
+# Tier-specific hyperparameters (BASE_MODEL overridable — see .env.example —
+# for laptops below the tier's assumed VRAM, e.g. a 6GB GPU under T4's 16GB norm)
 if COMPUTE_TIER == "T4":
-    BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
+    BASE_MODEL = os.environ.get("BASE_MODEL", "unsloth/Qwen2.5-3B-bnb-4bit")
     MAX_LEN = 512
     PER_DEVICE_BATCH = 1
     GRAD_ACCUM = 8
 else:  # BIGGPU
-    BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
+    BASE_MODEL = os.environ.get("BASE_MODEL", "unsloth/Qwen2.5-7B-bnb-4bit")
     MAX_LEN = 1024
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
@@ -85,6 +86,17 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     print("Set tokenizer.pad_token = eos_token")
 
+# Some bnb-4bit mirrors ship without tokenizer.chat_template — restore Qwen2.5's
+# standard ChatML template so apply_chat_template() works below.
+if tokenizer.chat_template is None:
+    tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+    )
+    print("Set tokenizer.chat_template = Qwen2.5 ChatML fallback")
+
 # %%
 model = FastLanguageModel.get_peft_model(
     model,
@@ -119,14 +131,20 @@ print(f"\nFirst row:\n{ds[0]}")
 # %%
 # Alpaca → ChatML format (Qwen2.5's native template)
 def format_alpaca_to_chat(row):
+    # Some VN Alpaca mirrors ship bilingual columns (instruction_vi/input_vi/output_vi)
+    # instead of the plain Alpaca instruction/input/output names.
+    instruction = row.get("instruction") or row.get("instruction_vi")
+    input_ = row.get("input") or row.get("input_vi")
+    output = row.get("output") or row.get("output_vi")
+
     messages = []
-    if row.get("instruction"):
-        prompt = row["instruction"]
-        if row.get("input"):
-            prompt += "\n\n" + row["input"]
+    if instruction:
+        prompt = instruction
+        if input_:
+            prompt += "\n\n" + input_
         messages.append({"role": "user", "content": prompt})
-    if row.get("output"):
-        messages.append({"role": "assistant", "content": row["output"]})
+    if output:
+        messages.append({"role": "assistant", "content": output})
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     return {"text": text}
 

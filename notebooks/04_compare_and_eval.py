@@ -25,10 +25,10 @@ from pathlib import Path
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
 
 if COMPUTE_TIER == "T4":
-    BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
+    BASE_MODEL = os.environ.get("BASE_MODEL", "unsloth/Qwen2.5-3B-bnb-4bit")
     MAX_LEN = 512
 else:
-    BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
+    BASE_MODEL = os.environ.get("BASE_MODEL", "unsloth/Qwen2.5-7B-bnb-4bit")
     MAX_LEN = 1024
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
@@ -79,6 +79,13 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_token
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.chat_template is None:
+        tokenizer.chat_template = (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+        )
 
     model = PeftModel.from_pretrained(model, str(adapter_path))
     FastLanguageModel.for_inference(model)
